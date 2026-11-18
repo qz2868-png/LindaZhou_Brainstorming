@@ -61,6 +61,178 @@ html, body {
   flex-direction: column;
 }
 
+/* ---------- TOP RIGHT AUTH INTERFACE ---------- */
+.auth-top-bar {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  right: 16px;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+}
+
+.google-sign-in-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px;
+  background: #FFFDF7;
+  border: 1.5px dashed var(--yellow-warm);
+  border-radius: 20px;
+  color: var(--text-dark);
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(180, 130, 60, 0.16);
+  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.google-sign-in-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(180, 130, 60, 0.22);
+}
+
+.google-sign-in-btn:active {
+  transform: scale(0.95);
+  background: #FFF5E0;
+}
+
+.user-profile-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px 4px 4px;
+  background: #FFFDF7;
+  border: 1.5px solid var(--cream-dark);
+  border-radius: 24px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(180, 130, 60, 0.14);
+  user-select: none;
+  transition: all 0.2s ease;
+}
+
+.user-profile-badge:hover {
+  border-color: var(--yellow-warm);
+}
+
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1.5px solid var(--yellow-warm);
+}
+
+.user-name-short {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-dark);
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron-down-icon {
+  color: var(--text-mid);
+  transition: transform 0.2s ease;
+}
+
+.user-profile-badge.menu-open .chevron-down-icon {
+  transform: rotate(180deg);
+}
+
+/* User Dropdown */
+.user-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 190px;
+  background: #FFFDF7;
+  border-radius: 18px;
+  border: 1.5px solid var(--cream-dark);
+  box-shadow: 0 10px 28px rgba(100, 70, 30, 0.18);
+  padding: 10px;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  animation: fadeInPop 0.18s ease-out forwards;
+}
+
+.user-dropdown-menu.show {
+  display: flex;
+}
+
+@keyframes fadeInPop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.dropdown-header {
+  padding: 4px 6px 8px 6px;
+  border-bottom: 1px dashed var(--cream-dark);
+  display: flex;
+  flex-direction: column;
+}
+
+.dropdown-full-name {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text-dark);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown-email {
+  font-size: 11px;
+  color: var(--text-light);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown-item {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: none;
+  background: none;
+  text-align: left;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-dark);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: background 0.15s ease;
+}
+
+.dropdown-item:hover {
+  background: var(--cream);
+  color: var(--yellow-warm);
+}
+
+.dropdown-item.logout {
+  color: #E8686A;
+}
+
+.dropdown-item.logout:hover {
+  background: #FFF5F5;
+  color: #D32F2F;
+}
+
 /* ---------- COMMON PAGES ---------- */
 .page {
   position: absolute;

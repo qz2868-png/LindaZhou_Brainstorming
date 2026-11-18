@@ -98,6 +98,125 @@ const defaultRecipes = [
   }
 ];
 
+// ========== FIREBASE SETUP ==========
+const firebaseConfig = {
+  apiKey: "AIzaSyAGz8x330uoNxagrtvgLY438EfGOfV-msE",
+  authDomain: "server-inclass-practice.firebaseapp.com",
+  projectId: "server-inclass-practice",
+  storageBucket: "server-inclass-practice.firebasestorage.app",
+  messagingSenderId: "420296366528",
+  appId: "1:420296366528:web:b04681412a137b5c0ed025"
+};
+
+let db = null;
+let auth = null;
+let currentUser = null;
+
+if (typeof firebase !== 'undefined') {
+  try {
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.firestore();
+    auth = firebase.auth();
+    console.log("Firebase Auth & Firestore connected successfully!");
+
+    // Listen for Authentication state changes
+    auth.onAuthStateChanged((user) => {
+      currentUser = user;
+      updateAuthUI(user);
+    });
+  } catch (err) {
+    console.warn("Firebase initialization error:", err);
+  }
+}
+
+// ========== GOOGLE AUTH HANDLERS ==========
+function handleGoogleSignIn() {
+  if (!auth) {
+    alert("Firebase Auth is not initialized yet.");
+    return;
+  }
+  const provider = new firebase.auth.GoogleAuthProvider();
+  // Using signInWithPopup (falls back gracefully)
+  auth.signInWithPopup(provider)
+    .then((result) => {
+      console.log("Signed in as:", result.user.displayName);
+    })
+    .catch((error) => {
+      console.error("Sign-in error:", error);
+      // If popup was blocked or mobile redirect needed
+      if (error.code === 'auth/popup-blocked' || error.code === 'auth/popup-closed-by-user') {
+        auth.signInWithRedirect(provider).catch((e) => console.error("Redirect error:", e));
+      } else {
+        alert("Google Sign-In: " + error.message);
+      }
+    });
+}
+
+function handleGoogleSignOut() {
+  if (!auth) return;
+  closeUserDropdown();
+  auth.signOut()
+    .then(() => {
+      console.log("User signed out");
+    })
+    .catch((error) => {
+      console.error("Sign-out error:", error);
+    });
+}
+
+function updateAuthUI(user) {
+  const loginBtn = document.getElementById('google-login-btn');
+  const userBadge = document.getElementById('user-profile-badge');
+  const avatarImg = document.getElementById('auth-user-avatar');
+  const nameShort = document.getElementById('auth-user-name');
+  const dropdownName = document.getElementById('dropdown-user-name');
+  const dropdownEmail = document.getElementById('dropdown-user-email');
+  const profileNameEl = document.querySelector('.profile-name');
+
+  if (user) {
+    if (loginBtn) loginBtn.style.display = 'none';
+    if (userBadge) userBadge.style.display = 'inline-flex';
+
+    const displayName = user.displayName || 'Chef';
+    const photoURL = user.photoURL || 'images/meal2.jpg';
+    const email = user.email || '';
+
+    if (avatarImg) avatarImg.src = photoURL;
+    if (nameShort) nameShort.textContent = displayName.split(' ')[0];
+    if (dropdownName) dropdownName.textContent = displayName;
+    if (dropdownEmail) dropdownEmail.textContent = email;
+
+    // Also update the profile page title
+    if (profileNameEl) profileNameEl.textContent = displayName;
+  } else {
+    if (loginBtn) loginBtn.style.display = 'inline-flex';
+    if (userBadge) userBadge.style.display = 'none';
+    if (profileNameEl) profileNameEl.textContent = 'Chef Linda';
+  }
+}
+
+function toggleUserDropdown(e) {
+  e.stopPropagation();
+  const dropdown = document.getElementById('user-dropdown-menu');
+  const badge = document.getElementById('user-profile-badge');
+  if (dropdown) {
+    dropdown.classList.toggle('show');
+    if (badge) badge.classList.toggle('menu-open');
+  }
+}
+
+function closeUserDropdown() {
+  const dropdown = document.getElementById('user-dropdown-menu');
+  const badge = document.getElementById('user-profile-badge');
+  if (dropdown) dropdown.classList.remove('show');
+  if (badge) badge.classList.remove('menu-open');
+}
+
+// Close dropdown when tapping anywhere else on the document
+document.addEventListener('click', () => {
+  closeUserDropdown();
+});
+
 // Load recipes from localStorage or fallback
 let recipes = (function loadStoredRecipes() {
   try {
@@ -111,6 +230,50 @@ let recipes = (function loadStoredRecipes() {
   }
   return defaultRecipes.slice();
 })();
+
+// Sync with Firestore (load any community/uploaded recipes saved in Firestore)
+function syncFromFirestore() {
+  if (!db) return;
+  db.collection("recipes").orderBy("createdAt", "desc").get()
+    .then((querySnapshot) => {
+      let firestoreRecipes = [];
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        firestoreRecipes.push({
+          id: doc.id,
+          name: data.name,
+          meta: data.meta,
+          img: data.img,
+          glowColor: data.glowColor || 'rgba(255, 205, 80, 0.75)',
+          ingredients: data.ingredients || ['Fresh ingredients', 'Cooked with love'],
+          fromFirestore: true
+        });
+      });
+
+      if (firestoreRecipes.length > 0) {
+        // Merge into recipes, avoiding duplicates by id or name
+        firestoreRecipes.forEach((fRec) => {
+          const exists = recipes.some(r => (r.id && r.id === fRec.id) || (r.name === fRec.name && r.img === fRec.img));
+          if (!exists) {
+            recipes.unshift(fRec);
+          }
+        });
+        persistRecipes();
+        if (typeof updateWheelDishesFn === 'function') updateWheelDishesFn();
+        renderBrowseGrid();
+      }
+    })
+    .catch((err) => {
+      console.warn("Could not sync recipes from Firestore:", err);
+    });
+}
+
+// Trigger initial sync once DOM and Firebase are ready
+if (typeof window !== 'undefined') {
+  window.addEventListener('DOMContentLoaded', () => {
+    syncFromFirestore();
+  });
+}
 
 function persistRecipes() {
   try {
@@ -506,6 +669,13 @@ function deleteCurrentModalRecipe() {
     return;
   }
 
+  // If stored in Firestore, delete from collection as well
+  if (db && recipeToRemove.id) {
+    db.collection("recipes").doc(recipeToRemove.id).delete()
+      .then(() => console.log("Deleted recipe from Firestore:", recipeToRemove.id))
+      .catch((err) => console.warn("Failed to delete from Firestore:", err));
+  }
+
   // Remove from array and persist
   recipes.splice(currentModalRecipeIndex, 1);
   persistRecipes();
@@ -620,6 +790,24 @@ function saveNewRecipe() {
     glowColor: 'rgba(255, 205, 80, 0.75)',
     ingredients: ['Fresh seasonal produce', 'Chef secret seasonings', 'Cooked with love']
   };
+
+  // Record to Firebase Firestore if connected
+  if (db) {
+    db.collection("recipes").add({
+      name: newRecipe.name,
+      meta: newRecipe.meta,
+      img: newRecipe.img,
+      glowColor: newRecipe.glowColor,
+      ingredients: newRecipe.ingredients,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then((docRef) => {
+      console.log("Recorded recipe to Firestore with ID:", docRef.id);
+      newRecipe.id = docRef.id;
+      persistRecipes();
+    }).catch((error) => {
+      console.error("Error adding recipe to Firestore:", error);
+    });
+  }
 
   // Add to top of list
   recipes.unshift(newRecipe);
