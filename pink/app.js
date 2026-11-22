@@ -125,6 +125,25 @@ if (typeof firebase !== 'undefined') {
     auth = firebase.auth();
     console.log("Firebase Auth & Firestore connected successfully!");
 
+    // Handle any pending redirect sign-in result (mobile / fallback)
+    auth.getRedirectResult()
+      .then((result) => {
+        if (result && result.user) {
+          console.log("Redirect sign-in successful:", result.user.displayName);
+          currentUser = result.user;
+          updateAuthUI(result.user);
+          updateCommunityAuthUI(result.user);
+        }
+      })
+      .catch((err) => {
+        if (err.code === 'auth/unauthorized-domain') {
+          const domain = window.location.hostname;
+          alert(`Google Sign-In Notice: Domain "${domain}" is not authorized yet.\n\nPlease add "${domain}" in your Firebase Console at:\nAuthentication > Settings > Authorized domains`);
+        } else {
+          console.warn("Redirect auth error:", err);
+        }
+      });
+
     // Listen for Authentication state changes
     auth.onAuthStateChanged((user) => {
       currentUser = user;
@@ -140,20 +159,34 @@ if (typeof firebase !== 'undefined') {
 // ========== GOOGLE AUTH HANDLERS ==========
 function handleGoogleSignIn() {
   if (!auth) {
-    alert("Firebase Auth is not initialized yet.");
+    alert("Firebase Auth is initializing, please try again in a second.");
     return;
   }
   const provider = new firebase.auth.GoogleAuthProvider();
-  // Using signInWithPopup (falls back gracefully)
+  provider.setCustomParameters({ prompt: 'select_account' });
+  provider.addScope('profile');
+  provider.addScope('email');
+
+  // Attempt popup first, fallback gracefully to redirect
   auth.signInWithPopup(provider)
     .then((result) => {
-      console.log("Signed in as:", result.user.displayName);
+      console.log("Google Sign-In successful:", result.user.displayName);
+      currentUser = result.user;
+      updateAuthUI(result.user);
+      updateCommunityAuthUI(result.user);
+      syncProfileFromFirestore();
     })
     .catch((error) => {
       console.error("Sign-in error:", error);
-      // If popup was blocked or mobile redirect needed
-      if (error.code === 'auth/popup-blocked' || error.code === 'auth/popup-closed-by-user') {
+      if (error.code === 'auth/unauthorized-domain') {
+        const domain = window.location.hostname;
+        alert(`Google Sign-In Notice: Domain "${domain}" is not authorized yet.\n\nPlease add "${domain}" in your Firebase Console at:\nAuthentication > Settings > Authorized domains`);
+      } else if (error.code === 'auth/operation-not-allowed') {
+        alert("Google Sign-In is not enabled yet in your Firebase Console.\n\nPlease enable Google provider in:\nFirebase Console > Authentication > Sign-in method.");
+      } else if (error.code === 'auth/popup-blocked') {
         auth.signInWithRedirect(provider).catch((e) => console.error("Redirect error:", e));
+      } else if (error.code === 'auth/popup-closed-by-user') {
+        console.log("Sign-in popup closed by user.");
       } else {
         alert("Google Sign-In: " + error.message);
       }
@@ -179,10 +212,12 @@ function updateAuthUI(user) {
   const nameShort = document.getElementById('auth-user-name');
   const dropdownName = document.getElementById('dropdown-user-name');
   const dropdownEmail = document.getElementById('dropdown-user-email');
+  const profileSignInBtn = document.getElementById('profile-signin-btn');
 
   if (user) {
     if (loginBtn) loginBtn.style.display = 'none';
     if (userBadge) userBadge.style.display = 'inline-flex';
+    if (profileSignInBtn) profileSignInBtn.style.display = 'none';
 
     const displayName = user.displayName || userProfile.name || 'Chef';
     const photoURL = user.photoURL || userProfile.avatar || 'images/meal2.jpg';
@@ -202,6 +237,7 @@ function updateAuthUI(user) {
   } else {
     if (loginBtn) loginBtn.style.display = 'inline-flex';
     if (userBadge) userBadge.style.display = 'none';
+    if (profileSignInBtn) profileSignInBtn.style.display = 'inline-flex';
   }
   applyUserProfileToUI();
 }
