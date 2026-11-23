@@ -1109,7 +1109,7 @@ function updateCommunityAuthUI(user) {
   if (user) {
     if (createCard) createCard.style.display = 'flex';
     if (loginPrompt) loginPrompt.style.display = 'none';
-    if (createAvatar) createAvatar.src = user.photoURL || 'images/pink_dish1.jpg';
+    if (createAvatar) createAvatar.src = user.photoURL || 'images/dish_new1.jpg';
     if (greeting) greeting.textContent = `${user.displayName ? user.displayName.split(' ')[0] : 'Chef'}'s kitchen moment...`;
 
     if (profileAvatarImg) {
@@ -1200,7 +1200,7 @@ function publishCommunityPost() {
     userId: currentUser.uid,
     userName: currentUser.displayName || 'Chef',
     userEmail: currentUser.email || '',
-    userAvatar: currentUser.photoURL || 'images/pink_dish1.jpg',
+    userAvatar: currentUser.photoURL || 'images/dish_new1.jpg',
     caption: caption,
     img: pendingCommunityPhotoData || '',
     likes: 0,
@@ -1283,11 +1283,11 @@ function renderCommunityFeed() {
   container.innerHTML = communityPosts.map((post) => {
     const isLiked = currentUser && post.likedBy && post.likedBy.includes(currentUser.uid);
     const timeStr = formatPostTime(post.createdAt);
-    const avatar = post.userAvatar || 'images/pink_dish1.jpg';
+    const avatar = post.userAvatar || 'images/dish_new1.jpg';
     const name = post.userName || 'Community Chef';
     const imageHtml = post.img ? `
       <div class="post-image">
-        <img src="${post.img}" alt="${escapeHtml(post.caption || 'Meal')}" loading="lazy" />
+        <img src="${post.img}" alt="${escapeHtml(post.caption || 'Meal')}" loading="lazy" onerror="this.onerror=null;this.parentElement.style.display='none';" />
       </div>
     ` : '';
 
@@ -1296,7 +1296,7 @@ function renderCommunityFeed() {
         <!-- Clickable post header to open User Profile -->
         <div class="post-header" onclick="openUserProfileModal('${post.userId}', '${escapeAttr(name)}', '${escapeAttr(avatar)}')">
           <div class="post-avatar">
-            <img src="${avatar}" alt="${name}" onerror="this.src='images/pink_dish1.jpg'" />
+            <img src="${avatar}" alt="${name}" onerror="this.onerror=null;this.src='images/dish_new1.jpg';" />
           </div>
           <div class="post-user-info">
             <span class="post-username">
@@ -1361,9 +1361,9 @@ function seedInitialCommunityPosts() {
       userId: 'chef-maria',
       userName: 'Maria K.',
       userEmail: 'maria@kitchen.com',
-      userAvatar: 'images/pink_dish2.jpg',
+      userAvatar: 'images/dish_new2.jpg',
       caption: "Made fresh strawberry dumplings with rose petal tea! 🌸 What is everyone cooking today?",
-      img: 'images/pink_dish1.jpg',
+      img: 'images/dish_new1.jpg',
       likes: 24,
       likedBy: [],
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -1423,7 +1423,7 @@ function openUserProfileModal(userId, userName, userAvatar) {
   const likesCountEl = document.getElementById('user-modal-likes-count');
   const postsListEl = document.getElementById('user-modal-posts-list');
 
-  if (avatarEl) avatarEl.src = userAvatar || 'images/pink_dish1.jpg';
+  if (avatarEl) avatarEl.src = userAvatar || 'images/dish_new1.jpg';
   if (nameEl) nameEl.textContent = userName || 'Community Chef';
 
   const userPosts = communityPosts.filter(p => p.userId === userId);
