@@ -103,7 +103,9 @@ if (typeof firebase !== 'undefined') {
       currentUser = user;
       updateAuthUI(user);
       updateCommunityAuthUI(user);
+      renderCommunityFeed();
       syncProfileFromFirestore();
+      listenToCommunityPosts();
     });
   } catch (err) {
     console.warn("Firebase initialization error:", err);
@@ -1070,11 +1072,46 @@ function toggleLike(btn) {
 }
 
 // ============================================
-// LIVE COMMUNITY FEED (FIRESTORE REAL-TIME)
+// LIVE COMMUNITY FEED (FIRESTORE REAL-TIME + LOCAL CACHE)
 // ============================================
+const COMMUNITY_CACHE_KEY = 'YUMMI_COMMUNITY_POSTS_CACHE';
 let communityPosts = [];
 let communityUnsubscribe = null;
 let pendingCommunityPhotoData = null;
+
+function loadCachedCommunityPosts() {
+  try {
+    const raw = localStorage.getItem(COMMUNITY_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        communityPosts = parsed;
+        renderCommunityFeed();
+      }
+    }
+  } catch (e) {
+    console.warn("Could not load community cache:", e);
+  }
+}
+
+function saveCachedCommunityPosts(posts) {
+  try {
+    const toCache = posts.slice(0, 30);
+    localStorage.setItem(COMMUNITY_CACHE_KEY, JSON.stringify(toCache));
+  } catch (e) {
+    console.warn("Could not save community cache:", e);
+  }
+}
+
+function getPostTimestampMillis(timestamp) {
+  if (!timestamp) return Date.now();
+  if (typeof timestamp.toMillis === 'function') return timestamp.toMillis();
+  if (typeof timestamp.toDate === 'function') return timestamp.toDate().getTime();
+  if (timestamp instanceof Date) return timestamp.getTime();
+  if (typeof timestamp === 'number') return timestamp;
+  const parsed = new Date(timestamp).getTime();
+  return isNaN(parsed) ? Date.now() : parsed;
+}
 
 function updateCommunityAuthUI(user) {
   const createCard = document.getElementById('create-post-card');
@@ -1123,7 +1160,7 @@ function handleCommunityPhotoSelected(event) {
     const rawData = e.target.result;
     const img = new Image();
     img.onload = function () {
-      const maxDim = 800;
+      const maxDim = 640;
       let w = img.width, h = img.height;
       if (w > maxDim || h > maxDim) {
         if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
@@ -1133,7 +1170,7 @@ function handleCommunityPhotoSelected(event) {
       canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
-      pendingCommunityPhotoData = canvas.toDataURL('image/jpeg', 0.8);
+      pendingCommunityPhotoData = canvas.toDataURL('image/jpeg', 0.75);
 
       const wrap = document.getElementById('post-photo-preview-wrap');
       const prevImg = document.getElementById('post-photo-preview-img');
@@ -1175,7 +1212,9 @@ function publishCommunityPost() {
     publishBtn.textContent = 'Posting... 🌸';
   }
 
-  const newPostData = {
+  const tempPostId = 'temp_' + Date.now();
+  const localPost = {
+    id: tempPostId,
     userId: currentUser.uid,
     userName: currentUser.displayName || 'Chef',
     userEmail: currentUser.email || '',
@@ -1184,23 +1223,47 @@ function publishCommunityPost() {
     img: pendingCommunityPhotoData || '',
     likes: 0,
     likedBy: [],
-    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    createdAt: Date.now()
   };
 
+  // 1. Optimistic UI: Add immediately so the author sees it in their feed right away!
+  communityPosts.unshift(localPost);
+  saveCachedCommunityPosts(communityPosts);
+  renderCommunityFeed();
+
+  // Reset input form
+  if (captionInput) captionInput.value = '';
+  clearCommunityPhoto();
+
   if (!db) {
-    alert("Database connection is initializing, please try again in a moment.");
+    alert("Saved locally! Note: Firestore database is still connecting.");
     if (publishBtn) { publishBtn.disabled = false; publishBtn.textContent = 'Publish ✨'; }
     return;
   }
 
+  const newPostData = {
+    userId: currentUser.uid,
+    userName: currentUser.displayName || 'Chef',
+    userEmail: currentUser.email || '',
+    userAvatar: currentUser.photoURL || 'images/dish_new1.jpg',
+    caption: caption,
+    img: localPost.img,
+    likes: 0,
+    likedBy: [],
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  };
+
   db.collection("community_posts").add(newPostData)
     .then((docRef) => {
       console.log("Community post published with ID:", docRef.id);
+      const idx = communityPosts.findIndex(p => p.id === tempPostId);
+      if (idx !== -1) {
+        communityPosts[idx].id = docRef.id;
+        saveCachedCommunityPosts(communityPosts);
+      }
       if (newPostData.img && newPostData.img.startsWith('data:')) {
         recordUploadedImageToFirestore('community_post', newPostData.img, { caption: newPostData.caption });
       }
-      if (captionInput) captionInput.value = '';
-      clearCommunityPhoto();
       if (publishBtn) {
         publishBtn.disabled = false;
         publishBtn.textContent = 'Publish ✨';
@@ -1208,7 +1271,7 @@ function publishCommunityPost() {
     })
     .catch((err) => {
       console.error("Error publishing community post:", err);
-      alert("Error sharing post: " + err.message);
+      alert("Note: Your post is visible locally, but could not sync to Firestore cloud: " + err.message + "\n\nPlease ensure Firestore Security Rules permit writes in Firebase Console.");
       if (publishBtn) {
         publishBtn.disabled = false;
         publishBtn.textContent = 'Publish ✨';
@@ -1216,34 +1279,72 @@ function publishCommunityPost() {
     });
 }
 
-function listenToCommunityPosts() {
-  if (!db) return;
-  if (communityUnsubscribe) communityUnsubscribe();
+function deleteCommunityPost(postId) {
+  if (!confirm("Are you sure you want to delete this recipe post? 🌸")) return;
 
-  communityUnsubscribe = db.collection("community_posts")
-    .orderBy("createdAt", "desc")
-    .limit(40)
-    .onSnapshot((snapshot) => {
-      communityPosts = [];
-      snapshot.forEach((doc) => {
-        communityPosts.push({ id: doc.id, ...doc.data() });
+  // Optimistic local removal
+  communityPosts = communityPosts.filter(p => p.id !== postId);
+  saveCachedCommunityPosts(communityPosts);
+  renderCommunityFeed();
+
+  if (db && !postId.startsWith('temp_')) {
+    db.collection("community_posts").doc(postId).delete()
+      .then(() => {
+        console.log("Post deleted from Firestore:", postId);
+      })
+      .catch((err) => {
+        console.warn("Could not delete from Firestore:", err);
       });
+  }
+}
 
-      if (communityPosts.length === 0) {
-        seedInitialCommunityPosts();
-      } else {
-        renderCommunityFeed();
-      }
+function listenToCommunityPosts() {
+  // Always load cached posts immediately so UI is never blank
+  loadCachedCommunityPosts();
 
-      if (currentUser) {
-        const myPosts = communityPosts.filter(p => p.userId === currentUser.uid);
-        const profilePostsCount = document.getElementById('profile-posts-count');
-        if (profilePostsCount) profilePostsCount.textContent = myPosts.length;
-      }
-    }, (err) => {
-      console.warn("Community feed snapshot notice:", err);
-      renderFallbackCommunityFeed();
-    });
+  if (!db) return;
+  if (communityUnsubscribe) {
+    try { communityUnsubscribe(); } catch (e) {}
+  }
+
+  try {
+    communityUnsubscribe = db.collection("community_posts")
+      .limit(60)
+      .onSnapshot((snapshot) => {
+        const fetchedPosts = [];
+        snapshot.forEach((doc) => {
+          fetchedPosts.push({ id: doc.id, ...doc.data() });
+        });
+
+        // Client-side sort descending by createdAt
+        fetchedPosts.sort((a, b) => {
+          const timeA = getPostTimestampMillis(a.createdAt);
+          const timeB = getPostTimestampMillis(b.createdAt);
+          return timeB - timeA;
+        });
+
+        if (fetchedPosts.length > 0) {
+          communityPosts = fetchedPosts;
+          saveCachedCommunityPosts(communityPosts);
+          renderCommunityFeed();
+        } else if (communityPosts.length === 0) {
+          seedInitialCommunityPosts();
+        }
+
+        if (currentUser) {
+          const myPosts = communityPosts.filter(p => p.userId === currentUser.uid);
+          const profilePostsCount = document.getElementById('profile-posts-count');
+          if (profilePostsCount) profilePostsCount.textContent = myPosts.length;
+        }
+      }, (err) => {
+        console.warn("Community feed snapshot notice:", err);
+        if (communityPosts.length === 0) {
+          renderFallbackCommunityFeed();
+        }
+      });
+  } catch (err) {
+    console.warn("Failed to listen to community_posts:", err);
+  }
 }
 
 function renderCommunityFeed() {
@@ -1261,6 +1362,7 @@ function renderCommunityFeed() {
 
   container.innerHTML = communityPosts.map((post) => {
     const isLiked = currentUser && post.likedBy && post.likedBy.includes(currentUser.uid);
+    const isOwner = currentUser && post.userId === currentUser.uid;
     const timeStr = formatPostTime(post.createdAt);
     const avatar = post.userAvatar || 'images/dish_new1.jpg';
     const name = post.userName || 'Community Chef';
@@ -1268,6 +1370,14 @@ function renderCommunityFeed() {
       <div class="post-image">
         <img src="${post.img}" alt="${escapeHtml(post.caption || 'Meal')}" loading="lazy" onerror="this.onerror=null;this.parentElement.style.display='none';" />
       </div>
+    ` : '';
+
+    const deleteBtnHtml = isOwner ? `
+      <button class="post-action-btn delete-btn" title="Delete post" onclick="deleteCommunityPost('${post.id}')" style="margin-left: auto; color: #d9777f; padding: 4px 8px; border-radius: 8px;">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+        </svg>
+      </button>
     ` : '';
 
     return `
@@ -1288,7 +1398,7 @@ function renderCommunityFeed() {
         ${imageHtml}
         <div class="post-content">
           ${post.caption ? `<p class="post-caption">${escapeHtml(post.caption)}</p>` : ''}
-          <div class="post-actions">
+          <div class="post-actions" style="display: flex; align-items: center; width: 100%;">
             <button class="post-action-btn like-btn ${isLiked ? 'liked' : ''}" onclick="togglePostLike('${post.id}')">
               <svg viewBox="0 0 24 24" width="22" height="22">
                 <path d="M12 21C12 21 3 13.5 3 8.5C3 5.4 5.4 3 8.5 3C10.2 3 11.8 3.8 12 5C12.2 3.8 13.8 3 15.5 3C18.6 3 21 5.4 21 8.5C21 13.5 12 21 12 21Z"
@@ -1303,6 +1413,7 @@ function renderCommunityFeed() {
               </svg>
               <span>Chef Info</span>
             </button>
+            ${deleteBtnHtml}
           </div>
         </div>
       </div>
@@ -1315,14 +1426,14 @@ function renderFallbackCommunityFeed() {
   if (!container) return;
   container.innerHTML = `
     <div class="community-post">
-      <div class="post-header" onclick="openUserProfileModal('sample-1', 'Maria K.', 'images/meal1.jpg')">
-        <div class="post-avatar"><img src="images/meal1.jpg" alt="Maria" /></div>
+      <div class="post-header" onclick="openUserProfileModal('sample-1', 'Maria K.', 'images/pink_dish1.jpg')">
+        <div class="post-avatar"><img src="images/pink_dish1.jpg" alt="Maria" onerror="this.onerror=null;this.src='images/dish_new1.jpg';" /></div>
         <div class="post-user-info">
           <span class="post-username">Maria K. <span class="post-user-badge-tag">view profile ↗</span></span>
           <span class="post-time">2 hours ago</span>
         </div>
       </div>
-      <div class="post-image"><img src="images/meal1.jpg" alt="" /></div>
+      <div class="post-image"><img src="images/pink_dish1.jpg" alt="" onerror="this.onerror=null;this.parentElement.style.display='none';" /></div>
       <div class="post-content">
         <p class="post-caption">Made grandma's braised pork recipe — the secret is patience and low heat! 🥢✨</p>
         <div class="post-actions">
@@ -1342,7 +1453,7 @@ function seedInitialCommunityPosts() {
       userEmail: 'maria@kitchen.com',
       userAvatar: 'images/dish_new2.jpg',
       caption: "Made fresh strawberry dumplings with rose petal tea! 🌸 What is everyone cooking today?",
-      img: 'images/dish_new1.jpg',
+      img: 'images/pink_dish1.jpg',
       likes: 24,
       likedBy: [],
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -1353,7 +1464,7 @@ function seedInitialCommunityPosts() {
       userEmail: 'jake@kitchen.com',
       userAvatar: 'images/meal3.jpg',
       caption: "Steak & mash night! Reverse sear method is a game changer 🥩🔥",
-      img: 'images/meal3.jpg',
+      img: 'images/pink_dish2.jpg',
       likes: 42,
       likedBy: [],
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -1371,7 +1482,24 @@ function togglePostLike(postId) {
     handleGoogleSignIn();
     return;
   }
-  if (!db) return;
+
+  // Instant optimistic like toggle in local state
+  const post = communityPosts.find(p => p.id === postId);
+  if (post) {
+    if (!post.likedBy) post.likedBy = [];
+    const uid = currentUser.uid;
+    if (post.likedBy.includes(uid)) {
+      post.likedBy = post.likedBy.filter(id => id !== uid);
+      post.likes = Math.max(0, (post.likes || 1) - 1);
+    } else {
+      post.likedBy.push(uid);
+      post.likes = (post.likes || 0) + 1;
+    }
+    saveCachedCommunityPosts(communityPosts);
+    renderCommunityFeed();
+  }
+
+  if (!db || postId.startsWith('temp_')) return;
 
   const postRef = db.collection("community_posts").doc(postId);
   db.runTransaction((transaction) => {
@@ -1389,9 +1517,12 @@ function togglePostLike(postId) {
         likedBy.push(uid);
         likes += 1;
       }
+
       transaction.update(postRef, { likedBy: likedBy, likes: likes });
     });
-  }).catch(err => console.error("Like toggle error:", err));
+  }).catch((err) => {
+    console.error("Like toggle error:", err);
+  });
 }
 
 function openUserProfileModal(userId, userName, userAvatar) {
@@ -1421,7 +1552,7 @@ function openUserProfileModal(userId, userName, userAvatar) {
     } else {
       postsListEl.innerHTML = userPosts.map(p => `
         <div style="background: white; border-radius: 16px; border: 1.5px solid var(--cream-dark); overflow: hidden; padding: 12px; display: flex; gap: 12px; align-items: center;">
-          ${p.img ? `<img src="${p.img}" style="width: 60px; height: 60px; border-radius: 12px; object-fit: cover;" />` : ''}
+          ${p.img ? `<img src="${p.img}" style="width: 60px; height: 60px; border-radius: 12px; object-fit: cover;" onerror="this.onerror=null;this.style.display='none';" />` : ''}
           <div style="flex: 1;">
             <p style="font-size: 13px; color: var(--text-dark); margin-bottom: 4px; line-height: 1.4;">${escapeHtml(p.caption || 'Delicious dish')}</p>
             <span style="font-size: 11px; color: var(--text-light);">${formatPostTime(p.createdAt)} · ❤️ ${p.likes || 0}</span>
@@ -1441,8 +1572,8 @@ function closeUserProfileModal() {
 
 function formatPostTime(timestamp) {
   if (!timestamp) return 'Just now';
-  let date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-  const diffSec = Math.floor((new Date() - date) / 1000);
+  const millis = getPostTimestampMillis(timestamp);
+  const diffSec = Math.floor((Date.now() - millis) / 1000);
   if (diffSec < 60) return 'Just now';
   if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
   if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
