@@ -12,42 +12,15 @@ function resolveImg(path) {
 }
 
 // ========== RECIPES DATABASE ==========
+const REMOVED_RECIPES = [
+  'Steamed Dumplings',
+  'Strawberry Pastry',
+  'Salmon Poke Bowl',
+  'Berry Lychee Fizz',
+  'Peach Shortcake'
+];
+
 const defaultRecipes = [
-  {
-    name: 'Steamed Dumplings',
-    meta: '8 ingredients · 35m · Medium',
-    img: 'images/dish_new1.jpg',
-    glowColor: 'rgba(242, 132, 158, 0.75)',
-    ingredients: ['Dumpling wrappers', 'Minced pork & shrimp', 'Fresh scallions & ginger', 'Sesame oil', 'Black vinegar dip']
-  },
-  {
-    name: 'Strawberry Pastry',
-    meta: '5 ingredients · 20m · Easy',
-    img: 'images/dish_new2.jpg',
-    glowColor: 'rgba(255, 175, 195, 0.75)',
-    ingredients: ['Handmade pastry', 'Alpine strawberries', 'Mascarpone cream', 'Powdered sugar', 'Mint leaf']
-  },
-  {
-    name: 'Salmon Poke Bowl',
-    meta: '7 ingredients · 18m · Easy',
-    img: 'images/dish_new3.jpg',
-    glowColor: 'rgba(242, 132, 158, 0.7)',
-    ingredients: ['Sashimi-grade salmon', 'Sakura pickled radish', 'Avocado', 'Japanese sushi rice', 'Pink salt', 'Ponzu glaze']
-  },
-  {
-    name: 'Berry Lychee Fizz',
-    meta: '4 ingredients · 5m · Refreshing',
-    img: 'images/dish_new4.jpg',
-    glowColor: 'rgba(240, 110, 150, 0.75)',
-    ingredients: ['Sparkling water', 'Crushed whole lychees', 'Fresh raspberries', 'Organic rose cordial']
-  },
-  {
-    name: 'Peach Shortcake',
-    meta: '8 ingredients · 40m · Medium',
-    img: 'images/dish_new5.jpg',
-    glowColor: 'rgba(242, 132, 158, 0.75)',
-    ingredients: ['Fluffy sponge cake', 'White peach slices', 'Whipped cream', 'Fresh mint leaves']
-  },
   {
     name: 'Braised Pork',
     meta: '6 ingredients · 45m · Medium',
@@ -412,10 +385,14 @@ let recipes = (function loadStoredRecipes() {
   try {
     const stored = localStorage.getItem('YUMMI_PINK_RECIPES');
     if (stored) {
-      const parsed = JSON.parse(stored);
-      // Ensure it doesn't contain old invalid dish paths
-      if (Array.isArray(parsed) && parsed.length >= 4 && !parsed.some(r => r.img && r.img.includes('pink_dish'))) {
-        return parsed;
+      let parsed = JSON.parse(stored);
+      // Filter out removed recipes and ensure clean data
+      if (Array.isArray(parsed) && parsed.length >= 1) {
+        parsed = parsed.filter(r => r && r.name && !REMOVED_RECIPES.includes(r.name) && !(r.img && r.img.includes('pink_dish')));
+        if (parsed.length >= 1) {
+          localStorage.setItem('YUMMI_PINK_RECIPES', JSON.stringify(parsed));
+          return parsed;
+        }
       }
     }
   } catch (e) {
@@ -432,6 +409,7 @@ function syncFromFirestore() {
       let firestoreRecipes = [];
       querySnapshot.forEach((doc) => {
         const data = doc.data();
+        if (REMOVED_RECIPES.includes(data.name)) return;
         firestoreRecipes.push({
           id: doc.id,
           name: data.name,
@@ -446,6 +424,7 @@ function syncFromFirestore() {
       if (firestoreRecipes.length > 0) {
         // Merge into recipes, avoiding duplicates by id or name
         firestoreRecipes.forEach((fRec) => {
+          if (REMOVED_RECIPES.includes(fRec.name)) return;
           const exists = recipes.some(r => (r.id && r.id === fRec.id) || (r.name === fRec.name && r.img === fRec.img));
           if (!exists) {
             recipes.unshift(fRec);
