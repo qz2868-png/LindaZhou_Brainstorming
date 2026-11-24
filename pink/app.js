@@ -58,6 +58,8 @@ const defaultRecipes = [
   }
 ];
 
+const defaultRecipeNames = defaultRecipes.map(r => r.name);
+
 // ========== FIREBASE SETUP ==========
 const firebaseConfig = {
   apiKey: "AIzaSyCq7sXrLc2-pzEuyorf6BeRsCIPZWtDHMM",
@@ -104,6 +106,7 @@ if (typeof firebase !== 'undefined') {
       updateAuthUI(user);
       updateCommunityAuthUI(user);
       renderCommunityFeed();
+      renderProfileRecipes();
       syncProfileFromFirestore();
       listenToCommunityPosts();
     });
@@ -419,7 +422,10 @@ function syncFromFirestore() {
           img: data.img,
           glowColor: data.glowColor || 'rgba(255, 205, 80, 0.75)',
           ingredients: data.ingredients || ['Fresh ingredients', 'Cooked with love'],
-          fromFirestore: true
+          fromFirestore: true,
+          isUserAdded: true,
+          authorId: data.authorId || data.userId || null,
+          authorName: data.authorName || null
         });
       });
 
@@ -500,30 +506,63 @@ function renderBrowseGrid() {
   `).join('');
 }
 
-// Render Published Recipes Grid on Profile Page
+// Helper to determine if a recipe was added by the user via the plus (+) icon
+function isMyCreatedRecipe(rec) {
+  if (!rec || !rec.name) return false;
+  if (REMOVED_RECIPES.includes(rec.name)) return false;
+  // Exclude the built-in default recipes that belong to Browse
+  if (defaultRecipeNames.includes(rec.name)) return false;
+
+  // If user is signed in with Google and recipe has authorId, match against user's uid
+  if (currentUser && (rec.authorId || rec.userId)) {
+    return rec.authorId === currentUser.uid || rec.userId === currentUser.uid;
+  }
+
+  // Locally added recipe or user created
+  return rec.isUserAdded === true || rec.fromFirestore === true || !defaultRecipeNames.includes(rec.name);
+}
+
+// Render Published Recipes Grid on Profile Page (Only recipes added with the plus icon)
 function renderProfileRecipes() {
   const grid = document.getElementById('profile-recipes-grid');
   const countBadge = document.getElementById('profile-recipes-badge');
   const statCount = document.getElementById('profile-recipe-count');
 
-  if (countBadge) countBadge.textContent = `${recipes.length} recipes`;
-  if (statCount) statCount.textContent = recipes.length;
+  const myRecipes = recipes.filter(r => isMyCreatedRecipe(r));
+
+  if (countBadge) countBadge.textContent = `${myRecipes.length} recipe${myRecipes.length === 1 ? '' : 's'}`;
+  if (statCount) statCount.textContent = myRecipes.length;
   if (!grid) return;
 
-  grid.innerHTML = recipes.map((rec, i) => `
-    <div class="recipe-card" onclick="openRecipeByIndex(${i})">
-      <div class="recipe-card-img">
-        <img src="${resolveImg(rec.img)}" alt="${escapeHtml(rec.name)}" loading="lazy" />
+  if (myRecipes.length === 0) {
+    grid.innerHTML = `
+      <div style="grid-column: 1 / -1; text-align: center; padding: 36px 16px; background: #FFFDF7; border-radius: 20px; border: 2px dashed var(--yellow-warm); margin-top: 8px;">
+        <div style="font-size: 34px; margin-bottom: 8px;">🥣✨</div>
+        <h4 style="font-family: var(--font-display); font-size: 22px; font-weight: 700; color: var(--text-dark); margin: 0 0 6px;">No added recipes yet</h4>
+        <p style="font-size: 14px; color: var(--text-light); margin: 0 0 16px;">Tap the plus (+) icon below to add your own dishes and secret recipes!</p>
+        <button onclick="const addBtn = document.querySelector('.nav-btn-add'); switchPage('page-add', addBtn);" style="padding: 8px 24px; background: var(--yellow-warm); color: white; border: none; border-radius: 20px; font-family: var(--font-display); font-size: 18px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 12px rgba(232, 160, 62, 0.3);">+ Add a Recipe</button>
       </div>
-      <div class="recipe-card-info">
-        <h3>${escapeHtml(rec.name)}</h3>
-        <p>${escapeHtml(rec.meta)}</p>
-        <div class="recipe-rating">
-          <span class="star">★</span><span class="star">★</span><span class="star">★</span><span class="star">★</span><span class="star">★</span>
+    `;
+    return;
+  }
+
+  grid.innerHTML = myRecipes.map((rec) => {
+    const originalIndex = recipes.indexOf(rec);
+    return `
+      <div class="recipe-card" onclick="openRecipeByIndex(${originalIndex})">
+        <div class="recipe-card-img">
+          <img src="${resolveImg(rec.img)}" alt="${escapeHtml(rec.name)}" loading="lazy" />
+        </div>
+        <div class="recipe-card-info">
+          <h3>${escapeHtml(rec.name)}</h3>
+          <p>${escapeHtml(rec.meta)}</p>
+          <div class="recipe-rating">
+            <span class="star">★</span><span class="star">★</span><span class="star">★</span><span class="star">★</span><span class="star">★</span>
+          </div>
         </div>
       </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 }
 
 // Render Wheel Dishes (Page 1)
@@ -1012,7 +1051,11 @@ function saveNewRecipe() {
     meta: meta,
     img: img,
     glowColor: 'rgba(255, 205, 80, 0.75)',
-    ingredients: ['Fresh seasonal produce', 'Chef secret seasonings', 'Cooked with love']
+    ingredients: ['Fresh seasonal produce', 'Chef secret seasonings', 'Cooked with love'],
+    isUserAdded: true,
+    authorId: currentUser ? currentUser.uid : 'local_user',
+    authorName: (currentUser && currentUser.displayName) || (typeof userProfile !== 'undefined' ? userProfile.name : 'Chef Linda'),
+    createdAt: new Date().toISOString()
   };
 
   // Record to Firebase Firestore if connected
@@ -1023,6 +1066,9 @@ function saveNewRecipe() {
       img: newRecipe.img,
       glowColor: newRecipe.glowColor,
       ingredients: newRecipe.ingredients,
+      isUserAdded: true,
+      authorId: newRecipe.authorId,
+      authorName: newRecipe.authorName,
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     }).then((docRef) => {
       console.log("Recorded recipe to Firestore with ID:", docRef.id);
